@@ -1,0 +1,69 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+const char* ssid = "Vodafone-A70643572";  // Nome della rete Wi-Fi
+const char* password = "bRYbPfRmTfrJMn3e";  // Password Wi-Fi
+
+const char* supabase_url = "https://mpwtvbccggpyrlvlkobw.supabase.co";  // URL API
+const char* supabase_api_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1wd3R2YmNjZ2dweXJsdmxrb2J3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk0NjA5ODgsImV4cCI6MjA1NTAzNjk4OH0.0DZI7WeQG4KU-nmGPG61aZeCDSDYtBUyIAV36Vtobq4";  // API Key Supabase
+
+void setup() {
+    Serial.begin(115200);
+    WiFi.begin(ssid, password);
+
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(1000);
+        Serial.println("Connessione WiFi in corso...");
+    }
+
+    Serial.println("WiFi Connesso!");
+    Serial.println("Inserisci un numero di posti liberi (ad esempio, 55):");
+}
+
+void loop() {
+    if (Serial.available() > 0) {
+        int posti = Serial.parseInt();  // Legge l'input numerico
+        if (posti > 0) {
+            aggiornaDatiSupabase(posti);  // Aggiorna Supabase con il numero di posti
+            Serial.print("Aggiornato con ");
+            Serial.print(posti);
+            Serial.println(" posti liberi.");
+        } else {
+            Serial.println("Inserisci un numero valido.");
+        }
+    }
+    delay(100); // Riduce il carico sul microcontrollore
+}
+
+void aggiornaDatiSupabase(int posti) {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+
+        // Crea l'URL per l'endpoint Supabase specificando la tabella 'aule' e l'ID da aggiornare (ad esempio ID = 1)
+        String url = supabase_url;
+        url += "/rest/v1/aule?id=eq.1";  // Aggiorna la riga con id = 1 (modifica l'ID in base al caso)
+
+        http.begin(url);
+        http.addHeader("Content-Type", "application/json");
+        http.addHeader("apikey", supabase_api_key);
+        http.addHeader("Authorization", "Bearer " + String(supabase_api_key));
+
+        StaticJsonDocument<200> doc;
+        doc["posti_liberi"] = posti; // Nuovo valore per posti liberi
+
+        String jsonPayload;
+        serializeJson(doc, jsonPayload);
+
+        int httpResponseCode = http.PATCH(jsonPayload);  // Usa PATCH per aggiornare i dati
+
+        if (httpResponseCode > 0) {
+            Serial.println("Dati aggiornati con successo!");
+        } else {
+            Serial.print("Errore nella richiesta: ");
+            Serial.println(httpResponseCode);
+        }
+
+        http.end();
+    }
+}
