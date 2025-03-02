@@ -1,0 +1,111 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+const char* ssid = "Vodafone-A70643572";  // Nome della rete Wi-Fi
+const char* password = "bRYbPfRmTfrJMn3e";  // Password Wi-Fi
+
+const char* supabase_url = "https://mpwtvbccggpyrlvlkobw.supabase.co";  // URL API
+const char* supabase_api_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1wd3R2YmNjZ2dweXJsdmxrb2J3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk0NjA5ODgsImV4cCI6MjA1NTAzNjk4OH0.0DZI7WeQG4KU-nmGPG61aZeCDSDYtBUyIAV36Vtobq4";  // API Key Supabase
+
+// Definizione dei pin di input (D2, D3, D4)
+const int posto1 = 12;
+const int posto2 = 14;
+const int posto3 = 27;
+const int posto4 = 33;
+
+unsigned long lastActivityTime[4];  // Tempi di attività per ogni posto
+bool seatOccupied[4] = {false, false, false, false};  // Stato del posto
+bool waitingForReturn[4] = {false, false, false, false};  // Flag per verificare se si sta aspettando il ritorno della persona
+const unsigned long timeout = 300000;  // 5 minuti in millisecondi (300.000ms)
+
+void setup() {
+    Serial.begin(115200);
+    WiFi.begin(ssid, password);
+
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(1000);
+        Serial.println("Connessione WiFi in corso...");
+    }
+
+    Serial.println("WiFi Connesso!");
+
+    pinMode(posto1, INPUT_PULLUP);
+    pinMode(posto2, INPUT_PULLUP);
+    pinMode(posto3, INPUT_PULLUP);
+    pinMode(posto4, INPUT_PULLUP);
+
+    // Inizializza i tempi di attività
+    for (int i = 0; i < 4; i++) {
+        lastActivityTime[i] = millis();
+    }
+}
+
+void loop() {
+    // Controlla lo stato di ogni pin e gestisci il tempo di attesa
+    for (int i = 0; i < 4; i++) {
+        int sensorValue = digitalRead(posto1 + i); // Legge il valore del sensore
+
+        // Se il sensore rileva una persona seduta
+        if (sensorValue == HIGH && !seatOccupied[i]) {
+            seatOccupied[i] = true;
+            lastActivityTime[i] = millis();  // Aggiorna il tempo di attività
+            aggiornaDatiSupabase(i + 1, true);  // Aggiorna lo stato del posto
+            waitingForReturn[i] = false;  // Annulla la flag di attesa
+        }
+
+        // Se il sensore non rileva nessuna persona
+        if (sensorValue == LOW && seatOccupied[i]) {
+            seatOccupied[i] = false;
+            waitingForReturn[i] = true;
+            lastActivityTime[i] = millis();  // Inizia il countdown di 5 minuti
+            aggiornaDatiSupabase(i + 1, false);  // Segna il posto come occupato
+        }
+
+        // Se la persona se ne è andata e il tempo di attesa è scaduto
+        if (waitingForReturn[i] && millis() - lastActivityTime[i] >= timeout) {
+            seatOccupied[i] = false;
+            waitingForReturn[i] = false;
+            aggiornaDatiSupabase(i + 1, false);  // Segna il posto come occupato
+            Serial.print("Posto ");
+            Serial.print(i + 1);
+            Serial.println(" occupato definitivamente");
+        }
+    }
+
+    delay(100); // Riduce il carico sul microcontrollore
+}
+
+void aggiornaDatiSupabase(int idAula, bool stato) {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+
+        // Crea l'URL per l'endpoint Supabase specificando la tabella 'aule' e l'ID
+        String url = supabase_url;
+        url += "/rest/v1/aule?id=eq." + String(idAula);  // Aggiorna la riga con idAula
+
+        http.begin(url);
+        http.addHeader("Content-Type", "application/json");
+        http.addHeader("apikey", supabase_api_key);
+        http.addHeader("Authorization", "Bearer " + String(supabase_api_key));
+
+        StaticJsonDocument<200> doc;
+        doc["stato"] = stato; // Modifica lo stato (true o false)
+
+        String jsonPayload;
+        serializeJson(doc, jsonPayload);
+
+        int httpResponseCode = http.PATCH(jsonPayload);  // Usa PATCH per aggiornare i dati
+
+        if (httpResponseCode > 0) {
+            Serial.print("Aula ");
+            Serial.print(idAula);
+            Serial.println(" aggiornata con successo!");
+        } else {
+            Serial.print("Errore nella richiesta: ");
+            Serial.println(httpResponseCode);
+        }
+
+        http.end();
+    }
+}
